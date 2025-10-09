@@ -243,7 +243,7 @@ export const Experience = () => {
                   </svg>
                 </button>
               </div>
-              <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+              {/* <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
                 <div className="flex items-center gap-2">
                   <label className="text-white/80 text-sm">Language:</label>
                   <select
@@ -257,11 +257,11 @@ export const Experience = () => {
                     </option>
                   ))}
                 </select>
-                {/* <span className="text-xs text-white/60">Selected: {selectedLanguageLabel}</span> */}
+                <span className="text-xs text-white/60">Selected: {selectedLanguageLabel}</span>
               </div>
               <div className="text-xs text-white/60 hidden sm:block">
               </div>
-            </div>
+            </div> */}
           </div>
 
           {/* Chat history (fills available space) */}
