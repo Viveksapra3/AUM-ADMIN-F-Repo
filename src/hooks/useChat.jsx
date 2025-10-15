@@ -27,7 +27,23 @@ export const ChatProvider = ({ children }) => {
   const [message, setMessage] = useState(null);
   const [loading, setLoading] = useState(false);
   const [cameraZoomed, setCameraZoomed] = useState(true);
-  
+  // External TTS controls for avatar
+  const [ttsActive, setTtsActive] = useState(false);
+  const [ttsStartTime, setTtsStartTime] = useState(0);
+
+  // TTS control functions
+  const startTTS = useCallback(() => {
+    setTtsActive(true);
+    setTtsStartTime(Date.now());
+    console.log(' TTS started');
+  }, []);
+
+  const stopTTS = useCallback(() => {
+    setTtsActive(false);
+    setTtsStartTime(0);
+    console.log(' TTS stopped');
+  }, []);
+
   // WebSocket state
   const [isConnected, setIsConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('disconnected'); // 'connected', 'connecting', 'disconnected', 'reconnecting'
@@ -45,6 +61,15 @@ export const ChatProvider = ({ children }) => {
   const isPlayingAudioRef = useRef(false);
   const currentAudioElementRef = useRef(null);
   const currentMessageDataRef = useRef(null);
+  
+  // Audio state tracking for avatar synchronization
+  const [audioState, setAudioState] = useState({
+    isPlaying: false,
+    hasError: false,
+    errorMessage: null,
+    currentTime: 0,
+    duration: 0
+  });
 
   // Convert HTTP backend URL to WebSocket URL
   const getWebSocketUrl = () => {
@@ -77,7 +102,7 @@ export const ChatProvider = ({ children }) => {
       console.warn("Could not build same-origin WS URL, will try localhost:", e);
     }
 
-    // Priority 3: last resort (dev)
+    // Priority 3: last resort (dev) - Use port 8765 for regular chat, 8766 for voice
     return (typeof window !== "undefined" && window.location && window.location.protocol === "https:") ? "wss://localhost:8765/" : "ws://localhost:8765/";
 };
 
@@ -157,6 +182,8 @@ export const ChatProvider = ({ children }) => {
         setLoading(true);
         audioQueueRef.current = [];
         isPlayingAudioRef.current = false;
+        startTTS();
+        setAudioState(prev => ({ ...prev, isPlaying: false, hasError: false, errorMessage: null }));
         break;
 
       case 'audio_chunk':
@@ -171,11 +198,27 @@ export const ChatProvider = ({ children }) => {
       case 'audio_generation_complete':
       case 'audio_complete':
         handleAudioComplete(data);
+        stopTTS();
         break;
 
       case 'error':
         console.error('WebSocket error:', data.error);
         setLoading(false);
+        stopTTS();
+        setAudioState(prev => ({ ...prev, isPlaying: false, hasError: true, errorMessage: data.error }));
+        break;
+
+      // Voice-specific message types (for integration)
+      case 'speech_started':
+      case 'utterance_end':
+      case 'partial_transcript':
+      case 'final_transcript':
+      case 'stt_ready':
+      case 'stt_unavailable':
+      case 'tts_interrupted':
+      case 'tts_cancelled':
+        // These are handled by the voice chat system
+        console.log('Voice message received in chat context:', messageType, data);
         break;
 
       default:
@@ -224,13 +267,14 @@ export const ChatProvider = ({ children }) => {
     const chunkMessage = {
       type: 'audio_chunk',
       text: currentMessageDataRef.current.text,
-      animation: "Idle", // Changed from "Idle" to "Talking_1" for speaking animation
+      animation: "Talking_1", // Use talking animation for audio chunks
       facialExpression: currentMessageDataRef.current.facialExpression || 'smile',
       audio: data.audio_data,
       lipsync: chunkLipsync,
       sequence: data.sequence || data.chunk_id || 0,
       isLast: data.isLast || data.is_last || false,
-      isChunk: true
+      isChunk: true,
+      audioState: { isPlaying: true, hasError: false }
     };
 
     // Send chunk directly to Avatar for immediate playback
@@ -407,9 +451,9 @@ export const ChatProvider = ({ children }) => {
         const audioFile = new File([audioBlob], 'audio.mp3', { type: 'audio/mpeg' });
         
         const lipsync = new Lipsync();
-        let lipsyncData;
         
         // Try the same methods with alternative MIME type
+        let lipsyncData;
         if (typeof lipsync.lipSync === 'function') {
           lipsyncData = await lipsync.lipSync(audioFile);
         } else if (typeof lipsync.fromAudioFile === 'function') {
@@ -610,13 +654,26 @@ export const ChatProvider = ({ children }) => {
     }
   };
 
-  // Simplified audio cleanup (no longer managing playback queue)
-  const stopAudioPlayback = () => {
+  // Enhanced audio cleanup with state management
+  const stopAudioPlayback = useCallback(() => {
     // Clear any remaining audio chunks
     audioQueueRef.current = [];
     isPlayingAudioRef.current = false;
+    
+    // Reset audio state
+    setAudioState({
+      isPlaying: false,
+      hasError: false,
+      errorMessage: null,
+      currentTime: 0,
+      duration: 0
+    });
+    
+    // Stop TTS
+    stopTTS();
+    
     console.log('🔇 Audio playback stopped (handled by Avatar)');
-  };
+  }, [stopTTS]);
 
   // WebSocket connection management
   const connectWebSocket = useCallback(() => {
@@ -887,6 +944,15 @@ export const ChatProvider = ({ children }) => {
         disconnectWebSocket,
         transcribeAudio,
         stopAudioPlayback,
+        // External TTS controls for avatar
+        ttsActive,
+        ttsStartTime,
+        startTTS,
+        stopTTS,
+        
+        // Audio state for avatar synchronization
+        audioState,
+        setAudioState,
         
         // Language configuration
         supportedLanguages: SUPPORTED_LANGUAGES,

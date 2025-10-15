@@ -487,9 +487,21 @@ let setupMode = false;
 export function Avatar(props) {
   const { nodes, materials, scene } = useGLTF("/models/av.glb");
 
-  const { message, onMessagePlayed, chat } = useChat();
+  const { message, onMessagePlayed, chat, audioState, ttsActive, ttsStartTime } = useChat();
 
   const [lipsync, setLipsync] = useState();
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+  const [audioError, setAudioError] = useState(null);
+  const audioTimeoutRef = useRef(null);
+
+  // Clear any existing timeout when component unmounts
+  useEffect(() => {
+    return () => {
+      if (audioTimeoutRef.current) {
+        clearTimeout(audioTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!message) {
@@ -529,28 +541,63 @@ export function Avatar(props) {
           const audio = new Audio("data:audio/mp3;base64," + message.audio);
           console.log('🔊 Playing audio chunk:', message.sequence);
           
+          // Clear any existing timeout
+          if (audioTimeoutRef.current) {
+            clearTimeout(audioTimeoutRef.current);
+          }
+          
+          setIsAudioPlaying(true);
+          setAudioError(null);
+          
           audio.oncanplaythrough = () => {
-            audio.play().catch(e => {
+            audio.play().then(() => {
+              console.log('🎵 Audio chunk started playing successfully');
+            }).catch(e => {
               console.error('Audio chunk play failed:', e);
+              setAudioError(e.message);
+              setIsAudioPlaying(false);
+              setAnimation("Idle");
+              setLipsync(null);
               onMessagePlayed();
             });
           };
           
           audio.onended = () => {
             console.log('🔊 Audio chunk ended:', message.sequence);
-            // Don't reset animation/lipsync immediately for chunks
-            // Let the next chunk or completion handle it
+            setIsAudioPlaying(false);
+            // For chunks, don't reset immediately - wait for next chunk or completion
+            if (message.isLast) {
+              setAnimation("Idle");
+              setLipsync(null);
+            }
             onMessagePlayed();
           };
           
           audio.onerror = (e) => {
             console.error('Audio chunk error:', e);
+            setAudioError('Audio playback failed');
+            setIsAudioPlaying(false);
+            setAnimation("Idle");
+            setLipsync(null);
             onMessagePlayed();
           };
+          
+          // Safety timeout to prevent stuck states
+          audioTimeoutRef.current = setTimeout(() => {
+            if (isAudioPlaying) {
+              console.warn('⚠️ Audio chunk timeout, resetting state');
+              setIsAudioPlaying(false);
+              setAnimation("Idle");
+              setLipsync(null);
+              onMessagePlayed();
+            }
+          }, 30000); // 30 second timeout
           
           setAudio(audio);
         } catch (error) {
           console.error('Error creating audio chunk:', error);
+          setAudioError('Failed to create audio');
+          setIsAudioPlaying(false);
           onMessagePlayed();
         }
       } else {
@@ -571,15 +618,30 @@ export function Avatar(props) {
         const audio = new Audio("data:audio/mp3;base64," + message.audio);
         console.log('🔊 Playing complete audio message');
         
+        // Clear any existing timeout
+        if (audioTimeoutRef.current) {
+          clearTimeout(audioTimeoutRef.current);
+        }
+        
+        setIsAudioPlaying(true);
+        setAudioError(null);
+        
         audio.oncanplaythrough = () => {
-          audio.play().catch(e => {
+          audio.play().then(() => {
+            console.log('🎵 Complete audio started playing successfully');
+          }).catch(e => {
             console.error('Audio play failed:', e);
+            setAudioError(e.message);
+            setIsAudioPlaying(false);
+            setAnimation("Idle");
+            setLipsync(null);
             setTimeout(onMessagePlayed, 2000);
           });
         };
         
         audio.onended = () => {
           console.log('🔊 Complete audio ended, calling onMessagePlayed');
+          setIsAudioPlaying(false);
           setAnimation("Idle");
           setLipsync(null);
           onMessagePlayed();
@@ -587,18 +649,35 @@ export function Avatar(props) {
         
         audio.onerror = (e) => {
           console.error('Audio error:', e);
+          setAudioError('Audio playback failed');
+          setIsAudioPlaying(false);
+          setAnimation("Idle");
+          setLipsync(null);
           setTimeout(onMessagePlayed, 1000);
         };
+        
+        // Safety timeout for complete messages
+        audioTimeoutRef.current = setTimeout(() => {
+          if (isAudioPlaying) {
+            console.warn('⚠️ Complete audio timeout, resetting state');
+            setIsAudioPlaying(false);
+            setAnimation("Idle");
+            setLipsync(null);
+            onMessagePlayed();
+          }
+        }, 60000); // 60 second timeout for complete messages
         
         setAudio(audio);
       } catch (error) {
         console.error('Error creating audio:', error);
+        setAudioError('Failed to create audio');
+        setIsAudioPlaying(false);
         setTimeout(onMessagePlayed, 1000);
       }
     } else {
       // For text-only messages, auto-complete after a short delay
       console.log('📝 Text-only message, auto-completing');
-      setTimeout(() => {
+      audioTimeoutRef.current = setTimeout(() => {
         setAnimation("Idle");
         setLipsync(null);
         onMessagePlayed();
@@ -766,6 +845,21 @@ export function Avatar(props) {
   const [facialExpression, setFacialExpression] = useState("");
   const [audio, setAudio] = useState();
 
+  // When voice TTS is active (from useVoiceChat), drive a talking animation if not playing a chat message
+  useEffect(() => {
+    if (!message) {
+      if (ttsActive) {
+        // Blend Idle + Talking for natural motion
+        setAnimation([
+          { name: "Idle", weight: 1 },
+          { name: "Talking_1", weight: 0 },
+        ]);
+      } else {
+        setAnimation("Idle");
+      }
+    }
+  }, [ttsActive, message]);
+
   useFrame(() => {
     !setupMode &&
       Object.keys(nodes.EyeLeft.morphTargetDictionary).forEach((key) => {
@@ -789,12 +883,14 @@ export function Avatar(props) {
     }
 
     const appliedMorphTargets = [];
-    if (message && lipsync && lipsync.mouthCues && audio && !audio.paused && !audio.ended) {
+    
+    // Only apply lipsync if audio is actually playing and not in error state
+    if (message && lipsync && lipsync.mouthCues && audio && !audio.paused && !audio.ended && isAudioPlaying && !audioError) {
       const currentAudioTime = audio.currentTime;
       
-      // Only log every 10th frame to reduce console spam
-      if (Math.floor(currentAudioTime * 10) % 10 === 0) {
-        console.log(`🎵 Lipsync: currentTime=${currentAudioTime.toFixed(2)}s, mouthCues=${lipsync.mouthCues.length}`);
+      // Only log every 30th frame to reduce console spam
+      if (Math.floor(currentAudioTime * 30) % 30 === 0) {
+        console.log(`🎵 Lipsync: currentTime=${currentAudioTime.toFixed(2)}s, mouthCues=${lipsync.mouthCues.length}, playing=${isAudioPlaying}`);
       }
       
       for (let i = 0; i < lipsync.mouthCues.length; i++) {
@@ -807,7 +903,10 @@ export function Avatar(props) {
           if (viseme) {
             appliedMorphTargets.push(viseme);
             lerpMorphTarget(viseme, 1, 0.2);
-            console.log(`👄 Applying viseme: ${mouthCue.value} -> ${viseme} at ${currentAudioTime.toFixed(2)}s`);
+            // Reduce logging frequency for viseme application
+            if (Math.floor(currentAudioTime * 10) % 5 === 0) {
+              console.log(`👄 Applying viseme: ${mouthCue.value} -> ${viseme} at ${currentAudioTime.toFixed(2)}s`);
+            }
           } else {
             console.warn(`⚠️ No mapping found for viseme: ${mouthCue.value}`);
           }
@@ -824,8 +923,38 @@ export function Avatar(props) {
           lerpMorphTarget(defaultViseme, 0.3, 0.1); // Subtle closed mouth
         }
       }
-    } else if (message && !lipsync) {
-      console.log('⚠️ Message exists but no lipsync data available');
+    } else if (message && audio && !audio.paused && !audio.ended && isAudioPlaying && !audioError) {
+      const visemes = Object.values(corresponding);
+      const t = audio.currentTime;
+      const speed = 6;
+      const idx = Math.floor(t * speed) % visemes.length;
+      const amp = 0.6 + 0.4 * Math.abs(Math.sin(t * 4.2));
+      const v = visemes[idx];
+      appliedMorphTargets.push(v);
+      lerpMorphTarget(v, amp, 0.2);
+    } else if (!message && ttsActive) {
+      // Voice route fallback: animate visemes generically while TTS is active
+      const pattern = [
+        corresponding['D'], // open vowel
+        corresponding['A'], // closed
+        corresponding['C'], // close vowel
+        corresponding['G'], // labiodental
+        corresponding['E'], // mid-back vowel
+        corresponding['B'], // back consonant
+        corresponding['F'], // close back vowel
+        corresponding['H'], // dental
+      ].filter(Boolean);
+      const now = Date.now();
+      const start = ttsStartTime || now;
+      const t = Math.max(0, (now - start) / 1000);
+      const speed = 7; // visemes per second
+      const idx = Math.floor(t * speed) % pattern.length;
+      const amp = 0.55 + 0.35 * Math.abs(Math.sin(t * 3.5));
+      const v = pattern[idx] || corresponding['A'];
+      if (v) {
+        appliedMorphTargets.push(v);
+        lerpMorphTarget(v, amp, 0.2);
+      }
     }
 
     // Reset all mouth shapes that aren't currently active
@@ -835,6 +964,15 @@ export function Avatar(props) {
       }
       lerpMorphTarget(value, 0, 0.1);
     });
+    
+    // Additional check: If no audio is playing or there's an error, ensure mouth is closed
+    if (!isAudioPlaying || audioError || audioState?.hasError || !ttsActive) {
+      // Gradually close mouth when no audio is playing
+      const closedViseme = corresponding['A']; // viseme_PP (closed mouth)
+      if (closedViseme && appliedMorphTargets.length === 0) {
+        lerpMorphTarget(closedViseme, 0.2, 0.05); // Gentle closed mouth position
+      }
+    }
   });
 
   // --- LEVA controls (added examples that show multi-animation usage) ---
