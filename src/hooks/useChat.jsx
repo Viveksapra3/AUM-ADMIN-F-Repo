@@ -127,7 +127,7 @@ export const ChatProvider = ({ children }) => {
     }
 
     // Priority 3: last resort (dev) - Use port 8765 for regular chat, 8766 for voice
-    return (typeof window !== "undefined" && window.location && window.location.protocol === "https:") ? "wss://localhost:8765/" : "ws://localhost:8765/";
+    return (typeof window !== "undefined" && window.location && window.location.protocol === "https:") ? "wss://localhost:8766/" : "ws://localhost:8766/";
 };
 
   // WebSocket message handlers
