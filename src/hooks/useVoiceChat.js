@@ -176,10 +176,7 @@ export const useVoiceChat = () => {
         break;
         
       case 'audio_chunk':
-        // Notify UI that audio playback is starting/continuing
-        if (onAudioChunkRef.current) {
-          try { onAudioChunkRef.current({ type: 'start', audio: data.audio }); } catch {}
-        }
+        // Start playback; start/end events are emitted inside playAudioChunk
         playAudioChunk(data.audio);
         break;
         
@@ -414,10 +411,18 @@ export const useVoiceChat = () => {
         try { if (onAudioChunkRef.current) onAudioChunkRef.current({ type: 'end' }); } catch {}
       };
       
-      // Emit start event when starting playback
-      try { if (onAudioChunkRef.current) onAudioChunkRef.current({ type: 'start' }); } catch {}
+      // Start playback first
       source.start();
       console.log('🎙️ Playing TTS audio');
+      
+      // Only emit start event after successful start and if AudioContext is running
+      setTimeout(() => {
+        try {
+          if (audioContextRef.current?.state === 'running' && currentAudioSourceRef.current === source) {
+            if (onAudioChunkRef.current) onAudioChunkRef.current({ type: 'start' });
+          }
+        } catch {}
+      }, 50); // Small delay to ensure audio actually started
       
     } catch (error) {
       console.error('🎙️ Error playing audio:', error);

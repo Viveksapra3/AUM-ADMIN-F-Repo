@@ -30,18 +30,31 @@ export const ChatProvider = ({ children }) => {
   // External TTS controls for avatar
   const [ttsActive, setTtsActive] = useState(false);
   const [ttsStartTime, setTtsStartTime] = useState(0);
+  const ttsTimeoutRef = useRef(null);
 
   // TTS control functions
   const startTTS = useCallback(() => {
-    setTtsActive(true);
-    setTtsStartTime(Date.now());
-    console.log(' TTS started');
+    // Clear any existing timeout
+    if (ttsTimeoutRef.current) {
+      clearTimeout(ttsTimeoutRef.current);
+    }
+    // Add a small delay to ensure audio is actually playing before showing visemes
+    ttsTimeoutRef.current = setTimeout(() => {
+      setTtsActive(true);
+      setTtsStartTime(Date.now());
+      console.log('🎙️ TTS started');
+    }, 100);
   }, []);
 
   const stopTTS = useCallback(() => {
+    // Clear any pending start timeout
+    if (ttsTimeoutRef.current) {
+      clearTimeout(ttsTimeoutRef.current);
+      ttsTimeoutRef.current = null;
+    }
     setTtsActive(false);
     setTtsStartTime(0);
-    console.log(' TTS stopped');
+    console.log('🎙️ TTS stopped');
   }, []);
 
   // WebSocket state
@@ -62,14 +75,25 @@ export const ChatProvider = ({ children }) => {
   const currentAudioElementRef = useRef(null);
   const currentMessageDataRef = useRef(null);
   
-  // Audio state tracking for avatar synchronization
+  // Audio state for avatar synchronization
   const [audioState, setAudioState] = useState({
     isPlaying: false,
-    hasError: false,
-    errorMessage: null,
     currentTime: 0,
-    duration: 0
+    duration: 0,
+    hasError: false,
   });
+
+  // Cleanup effect to prevent memory leaks and stuck visemes
+  useEffect(() => {
+    return () => {
+      // Clear any pending TTS timeout on unmount
+      if (ttsTimeoutRef.current) {
+        clearTimeout(ttsTimeoutRef.current);
+      }
+      // Ensure TTS is stopped on unmount
+      setTtsActive(false);
+    };
+  }, []);
 
   // Convert HTTP backend URL to WebSocket URL
   const getWebSocketUrl = () => {
