@@ -55,7 +55,7 @@ export const useVoiceChat = () => {
       updateStatus('connecting');
       
       // Get WebSocket URL from environment variable
-      const baseUrl = process.env.NEXT_PUBLIC_NEXT_WEB_API || 'ws://localhost:8766';
+      const baseUrl = process.env.NEXT_PUBLIC_NEXT_WEB_API ;
       // Convert HTTP(S) URL to WebSocket URL if needed
       const wsUrl = baseUrl.replace(/^https?:\/\//, 'ws://').replace(/^http:\/\//, 'ws://');
       
